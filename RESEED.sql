@@ -1,0 +1,8 @@
+DELETE FROM SeriesEpisodes;
+DBCC CHECKIDENT ('SeriesEpisodes', RESEED, 0);
+DELETE FROM SeriesSeasons;
+DBCC CHECKIDENT ('SeriesSeasons', RESEED, 0);
+DELETE FROM MovieFiles;
+DBCC CHECKIDENT ('MovieFiles', RESEED, 0);
+DELETE FROM Media;
+DBCC CHECKIDENT ('Media', RESEED, 0);
