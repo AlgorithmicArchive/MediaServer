@@ -50,10 +50,7 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
     [HttpGet]
     public async Task<IActionResult> GetMediaDetails(int mediaId)
     {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (!int.TryParse(userIdClaim, out int userId))
-            return Unauthorized(new { error = "Invalid user" });
-
+        int userId = Convert.ToInt32(User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
         var media = await _dbContext.Media
             .Include(m => m.MovieFiles)
             .Include(m => m.SeriesSeasons)
@@ -65,7 +62,6 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
 
         var result = new
         {
-            basePath = _env.WebRootPath,
             media.MediaId,
             media.Title,
             media.Description,
@@ -90,9 +86,14 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
                                 e.EpisodeNumber,
                                 e.Title,
                                 StreamUrl = e.FilePath,
-                                progress = _dbContext.UserPlaybackProgress
-                                    .Where(p => p.UserId == userId && p.EpisodeId == e.EpisodeId && !p.IsCompleted)
-                                    .Select(p => new { p.LastPosition, p.Duration })
+                                Progress = _dbContext.UserPlaybackProgress
+                                    .Where(p => p.UserId == userId && p.EpisodeId == e.EpisodeId)
+                                    .Select(p => new
+                                    {
+                                        p.LastPosition,
+                                        p.Duration,
+                                        p.IsCompleted
+                                    })
                                     .FirstOrDefault()
                             })
                             .ToList()
@@ -106,37 +107,54 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
                         f.MovieFileId,
                         f.FileName,
                         StreamUrl = f.FilePath,
-                        progress = _dbContext.UserPlaybackProgress
-                            .Where(p => p.UserId == userId && p.MediaId == mediaId && p.EpisodeId == null && !p.IsCompleted)
-                            .Select(p => new { p.LastPosition, p.Duration })
+                        Progress = _dbContext.UserPlaybackProgress
+                            .Where(p => p.UserId == userId && p.MediaId == media.MediaId && p.EpisodeId == null)
+                            .Select(p => new
+                            {
+                                p.LastPosition,
+                                p.Duration,
+                                p.IsCompleted
+                            })
                             .FirstOrDefault()
                     })
                     .ToList()
                 : null,
-            overallProgress = _dbContext.UserPlaybackProgress
-                .Where(p => p.UserId == userId && p.MediaId == mediaId && !p.IsCompleted)
-                .OrderByDescending(p => p.LastWatchedAt)
-                .Select(p => new { p.LastPosition, p.Duration, p.EpisodeId, p.IsCompleted })
-                .FirstOrDefault() // For quick resume on media level
+            overallProgress = media.Type.Equals("series", StringComparison.OrdinalIgnoreCase)
+                ? _dbContext.UserPlaybackProgress
+                    .Where(p => p.UserId == userId && p.MediaId == media.MediaId && p.EpisodeId != null)
+                    .OrderByDescending(p => p.LastWatchedAt)
+                    .Select(p => new
+                    {
+                        p.EpisodeId,
+                        p.LastPosition,
+                        p.Duration,
+                        p.IsCompleted
+                    })
+                    .FirstOrDefault()
+                : null
         };
 
         return Ok(result);
     }
 
     [HttpPost]
+    [HttpPost]
     public async Task<IActionResult> UpdateProgress([FromBody] UpdateProgressRequest request)
     {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (!int.TryParse(userIdClaim, out int userId))
-            return Unauthorized(new { error = "Invalid user" });
+        int userId = Convert.ToInt32(User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
+        if (request.Position < 0 || request.Duration < 0)
+            return BadRequest(new { error = "Invalid progress data" });
 
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
+        // Skip if position hasn't changed significantly
         var progress = await _dbContext.UserPlaybackProgress
             .FirstOrDefaultAsync(p => p.UserId == userId &&
-                p.MediaId == request.MediaId &&
-                (request.EpisodeId.HasValue ? p.EpisodeId == request.EpisodeId : p.EpisodeId == null));
+                                     p.MediaId == request.MediaId &&
+                                     (request.EpisodeId == null || p.EpisodeId == request.EpisodeId));
+
+        if (progress != null && progress.LastPosition == request.Position && progress.IsCompleted == request.IsCompleted)
+        {
+            return Ok(new { message = "Progress unchanged" });
+        }
 
         if (progress == null)
         {
@@ -161,9 +179,10 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
         }
 
         await _dbContext.SaveChangesAsync();
-        return Ok(new { message = "Progress updated" });
+        _logger.LogInformation("Updated progress for user {UserId}, media {MediaId}, episode {EpisodeId}: {Position}/{Duration}",
+            userId, request.MediaId, request.EpisodeId, request.Position, request.Duration);
+        return Ok(new { message = "Progress updated successfully" });
     }
-
     [HttpGet]
     [AllowAnonymous]
     public IActionResult StreamMedia(string filePath)
