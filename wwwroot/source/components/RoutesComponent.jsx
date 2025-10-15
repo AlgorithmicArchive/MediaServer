@@ -7,7 +7,7 @@ import UserLayout from "../screens/user/UserLayout";
 import AdminLayout from "../screens/admin/AdminLayout";
 import Home from "../../source/screens/admin/AdminHome";
 import MediaDetailPage from "../screens/user/MediaDetails";
-import Test from "../screens/user/Test";
+import ManageMedia from "../screens/admin/ManageMedia";
 
 const RoutesComponent = () => (
   <Routes>
@@ -18,7 +18,6 @@ const RoutesComponent = () => (
       <Route path="/user" element={<UserLayout />}>
         <Route path="home" element={<HomePage />} />
         <Route path="media/:mediaId" element={<MediaDetailPage />} />
-        <Route path="test" element={<Test />} />
       </Route>
     </Route>
 
@@ -26,6 +25,7 @@ const RoutesComponent = () => (
     <Route element={<ProtectedRoute requiredRoles={["Admin"]} />}>
       <Route path="/admin" element={<AdminLayout />}>
         <Route path="home" element={<Home />} />
+        <Route path="managemedia" element={<ManageMedia />} />
       </Route>
     </Route>
 

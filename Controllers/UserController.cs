@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
 
 namespace MediaServer.Controllers;
 
@@ -17,12 +18,12 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
     private readonly MediaServerContext _dbContext = dbContext;
     private readonly IWebHostEnvironment _env = _env;
 
+
     [HttpGet]
     public async Task<IActionResult> GetMedia()
     {
         try
         {
-            await DownloadFromUrlAsync("https://IMDb.iamidiotareyoutoo.com/title/tt0145487", "C:\\Temp\\imdb_page.html");
             var media = await _dbContext.Media
                 .Where(m => (bool)m.IsActive!)
                 .Select(m => new
@@ -46,37 +47,18 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
         }
     }
 
-    public static async Task DownloadFromUrlAsync(string url, string savePath)
-    {
-        using HttpClient client = new();
-
-        try
-        {
-            // Fetch the content from the URL
-            HttpResponseMessage response = await client.GetAsync(url);
-            response.EnsureSuccessStatusCode();
-
-            // Read the content as a byte array
-            byte[] content = await response.Content.ReadAsByteArrayAsync();
-
-            // Save to file
-            await System.IO.File.WriteAllBytesAsync(savePath, content);
-
-            Console.WriteLine($"Downloaded content saved to {savePath}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error downloading content: {ex.Message}");
-        }
-    }
-
+    [HttpGet]
     public async Task<IActionResult> GetMediaDetails(int mediaId)
     {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdClaim, out int userId))
+            return Unauthorized(new { error = "Invalid user" });
+
         var media = await _dbContext.Media
             .Include(m => m.MovieFiles)
             .Include(m => m.SeriesSeasons)
                 .ThenInclude(s => s.SeriesEpisodes)
-            .FirstOrDefaultAsync(m => m.MediaId == mediaId);
+            .FirstOrDefaultAsync(m => m.MediaId == mediaId && (bool)m.IsActive!);
 
         if (media == null)
             return NotFound(new { error = "Media not found" });
@@ -107,7 +89,11 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
                                 e.EpisodeId,
                                 e.EpisodeNumber,
                                 e.Title,
-                                StreamUrl = e.FilePath
+                                StreamUrl = e.FilePath,
+                                progress = _dbContext.UserPlaybackProgress
+                                    .Where(p => p.UserId == userId && p.EpisodeId == e.EpisodeId && !p.IsCompleted)
+                                    .Select(p => new { p.LastPosition, p.Duration })
+                                    .FirstOrDefault()
                             })
                             .ToList()
                     })
@@ -119,144 +105,110 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
                     {
                         f.MovieFileId,
                         f.FileName,
-                        StreamUrl = f.FilePath
+                        StreamUrl = f.FilePath,
+                        progress = _dbContext.UserPlaybackProgress
+                            .Where(p => p.UserId == userId && p.MediaId == mediaId && p.EpisodeId == null && !p.IsCompleted)
+                            .Select(p => new { p.LastPosition, p.Duration })
+                            .FirstOrDefault()
                     })
                     .ToList()
-                : null
+                : null,
+            overallProgress = _dbContext.UserPlaybackProgress
+                .Where(p => p.UserId == userId && p.MediaId == mediaId && !p.IsCompleted)
+                .OrderByDescending(p => p.LastWatchedAt)
+                .Select(p => new { p.LastPosition, p.Duration, p.EpisodeId, p.IsCompleted })
+                .FirstOrDefault() // For quick resume on media level
         };
 
         return Ok(result);
     }
 
-    [HttpGet]
-    public async Task<IActionResult> StreamMedia(string filePath)
+    [HttpPost]
+    public async Task<IActionResult> UpdateProgress([FromBody] UpdateProgressRequest request)
     {
-        if (string.IsNullOrWhiteSpace(filePath))
-            return BadRequest(new { error = "Invalid file path" });
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(userIdClaim, out int userId))
+            return Unauthorized(new { error = "Invalid user" });
 
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var progress = await _dbContext.UserPlaybackProgress
+            .FirstOrDefaultAsync(p => p.UserId == userId &&
+                p.MediaId == request.MediaId &&
+                (request.EpisodeId.HasValue ? p.EpisodeId == request.EpisodeId : p.EpisodeId == null));
+
+        if (progress == null)
+        {
+            progress = new UserPlaybackProgress
+            {
+                UserId = userId,
+                MediaId = request.MediaId,
+                EpisodeId = request.EpisodeId,
+                LastPosition = request.Position,
+                Duration = request.Duration,
+                IsCompleted = (bool)request.IsCompleted!,
+                LastWatchedAt = DateTime.UtcNow
+            };
+            _dbContext.UserPlaybackProgress.Add(progress);
+        }
+        else
+        {
+            progress.LastPosition = request.Position;
+            progress.Duration = request.Duration;
+            progress.IsCompleted = (bool)request.IsCompleted!;
+            progress.LastWatchedAt = DateTime.UtcNow;
+        }
+
+        await _dbContext.SaveChangesAsync();
+        return Ok(new { message = "Progress updated" });
+    }
+
+    [HttpGet]
+    [AllowAnonymous]
+    public IActionResult StreamMedia(string filePath)
+    {
+        _logger.LogInformation($"  --------------------Requested file path: {_env.WebRootPath} ---------");
+        var fullPath = Path.Combine(_env.WebRootPath, filePath = Path.DirectorySeparatorChar == '\\'
+    ? filePath.Replace('/', '\\')
+    : filePath.Replace('\\', '/'));
+        _logger.LogInformation($"---------- Streaming media from path: {fullPath} ------------");
+        if (!System.IO.File.Exists(fullPath)) return NotFound();
+
+        var stream = System.IO.File.OpenRead(fullPath);
+        var contentType = "video/mp4"; // adjust if needed
+        return File(stream, contentType, enableRangeProcessing: true);
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetContinueWatching(int userId)
+    {
         try
         {
-            var safePath = filePath.Replace("/", Path.DirectorySeparatorChar.ToString())
-                                  .Replace("\\", Path.DirectorySeparatorChar.ToString());
-            if (safePath.Contains("..") || Path.IsPathRooted(safePath))
-                return BadRequest(new { error = "Invalid file path" });
-
-            var fullPath = Path.Combine(_env.WebRootPath, safePath);
-
-            if (!System.IO.File.Exists(fullPath))
-                return NotFound(new { error = "File not found" });
-
-            var ext = Path.GetExtension(fullPath).ToLowerInvariant();
-
-            if (ext == ".mp4")
-            {
-                var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                Response.Headers.Add("Accept-Ranges", "bytes");
-                return File(stream, "video/mp4", enableRangeProcessing: true);
-            }
-
-            if (!IsFFmpegAvailable())
-                return StatusCode(500, new { error = "FFmpeg is not available on the server" });
-
-            // Check codecs with ffprobe (simplified, requires implementation)
-            bool canCopyCodecs = await CanCopyCodecs(fullPath); // Implement this
-            var ffmpegArgs = canCopyCodecs
-                ? $"-i \"{fullPath}\" -f mp4 -c:v copy -c:a copy -movflags frag_keyframe+empty_moov pipe:1"
-                : $"-i \"{fullPath}\" -f mp4 -vcodec libx264 -preset ultrafast -acodec aac -movflags frag_keyframe+empty_moov pipe:1";
-
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
+            var progress = await _dbContext.UserPlaybackProgress
+                .Include(p => p.Media)
+                .Where(p => p.UserId == userId && !p.IsCompleted && p.Media.IsActive == true)
+                .OrderByDescending(p => p.LastWatchedAt)
+                .Select(p => new
                 {
-                    FileName = "ffmpeg",
-                    Arguments = ffmpegArgs,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.ErrorDataReceived += (sender, e) => _logger.LogError("FFmpeg: {Data}", e.Data);
-            process.Start();
-            process.BeginErrorReadLine();
-            return File(process.StandardOutput.BaseStream, "video/mp4");
+                    p.MediaId,
+                    p.Media.Title,
+                    p.Media.Description,
+                    Type = p.Media.Type.ToLowerInvariant(),
+                    p.Media.ThumbnailPath,
+                    p.Media.TrailerPath,
+                    p.EpisodeId,
+                    p.LastPosition,
+                    p.Duration
+                })
+                .ToListAsync();
+            return Ok(progress);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error while streaming file: {FilePath}", filePath);
-            return StatusCode(500, new { error = $"Failed to stream file: {ex.Message}" });
+            _logger.LogError(ex, "Error fetching continue watching");
+            return StatusCode(500, new { error = "Internal server error" });
         }
     }
 
-    private async Task<bool> CanCopyCodecs(string filePath)
-    {
-        // Run ffprobe to check codecs
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "ffprobe",
-                Arguments = $"-i \"{filePath}\" -show_streams -select_streams v:0 -show_entries stream=codec_name -of json",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
-        process.Start();
-        var output = await process.StandardOutput.ReadToEndAsync();
-        await process.WaitForExitAsync();
-
-        // Parse ffprobe output (simplified)
-        var json = System.Text.Json.JsonDocument.Parse(output);
-        var videoCodec = json.RootElement.GetProperty("streams")[0].GetProperty("codec_name").GetString();
-        var audioOutput = await RunFFprobeForAudio(filePath);
-        var audioCodec = System.Text.Json.JsonDocument.Parse(audioOutput).RootElement.GetProperty("streams")[0].GetProperty("codec_name").GetString();
-
-        return videoCodec == "h264" && audioCodec == "aac";
-    }
-
-    private async Task<string> RunFFprobeForAudio(string filePath)
-    {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "ffprobe",
-                Arguments = $"-i \"{filePath}\" -show_streams -select_streams a:0 -show_entries stream=codec_name -of json",
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
-        process.Start();
-        var output = await process.StandardOutput.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        return output;
-    }
-
-    private bool IsFFmpegAvailable()
-    {
-        try
-        {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "ffmpeg",
-                    Arguments = "-version",
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-            process.Start();
-            process.WaitForExit();
-            return process.ExitCode == 0;
-        }
-        catch
-        {
-            return false;
-        }
-    }
 }

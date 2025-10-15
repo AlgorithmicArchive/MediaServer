@@ -18,4 +18,6 @@ public partial class SeriesEpisodes
     public DateTime? CreatedAt { get; set; }
 
     public virtual SeriesSeasons Season { get; set; } = null!;
+
+    public virtual ICollection<UserPlaybackProgress> UserPlaybackProgress { get; set; } = new List<UserPlaybackProgress>();
 }

@@ -23,6 +23,8 @@ public partial class MediaServerContext : DbContext
 
     public virtual DbSet<SeriesSeasons> SeriesSeasons { get; set; }
 
+    public virtual DbSet<UserPlaybackProgress> UserPlaybackProgress { get; set; }
+
     public virtual DbSet<Users> Users { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -59,7 +61,6 @@ public partial class MediaServerContext : DbContext
 
             entity.HasOne(d => d.Media).WithMany(p => p.MovieFiles)
                 .HasForeignKey(d => d.MediaId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_MovieFiles_Media");
         });
 
@@ -73,7 +74,6 @@ public partial class MediaServerContext : DbContext
 
             entity.HasOne(d => d.Season).WithMany(p => p.SeriesEpisodes)
                 .HasForeignKey(d => d.SeasonId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_SeriesEpisodes_Season");
         });
 
@@ -86,8 +86,27 @@ public partial class MediaServerContext : DbContext
 
             entity.HasOne(d => d.Media).WithMany(p => p.SeriesSeasons)
                 .HasForeignKey(d => d.MediaId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_SeriesSeasons_Media");
+        });
+
+        modelBuilder.Entity<UserPlaybackProgress>(entity =>
+        {
+            entity.HasKey(e => e.ProgressId);
+
+            entity.Property(e => e.LastWatchedAt).HasDefaultValueSql("(getdate())");
+
+            entity.HasOne(d => d.Episode).WithMany(p => p.UserPlaybackProgress)
+                .HasForeignKey(d => d.EpisodeId)
+                .HasConstraintName("FK_UserPlaybackProgress_Episode");
+
+            entity.HasOne(d => d.Media).WithMany(p => p.UserPlaybackProgress)
+                .HasForeignKey(d => d.MediaId)
+                .HasConstraintName("FK_UserPlaybackProgress_Media");
+
+            entity.HasOne(d => d.User).WithMany(p => p.UserPlaybackProgress)
+                .HasForeignKey(d => d.UserId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_UserPlaybackProgress_User");
         });
 
         modelBuilder.Entity<Users>(entity =>

@@ -1,5 +1,14 @@
-import React, { useState, useRef } from "react";
-import { Box, Card, CardMedia, Typography, Button } from "@mui/material";
+import React, { useState, useRef, useEffect } from "react";
+import {
+  Box,
+  Card,
+  CardMedia,
+  Typography,
+  Button,
+  IconButton,
+  Fade,
+} from "@mui/material";
+import { VolumeUp, VolumeOff, PlayArrow, Pause } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
 
 export default function MovieCard({
@@ -11,11 +20,25 @@ export default function MovieCard({
 }) {
   const [hovered, setHovered] = useState(false);
   const [muted, setMuted] = useState(true);
+  const [playing, setPlaying] = useState(true);
   const videoRef = useRef(null);
   const navigate = useNavigate();
 
-  // Toggle mute on video click
-  const handleMuteClick = (e) => {
+  // Handle video play/pause
+  const handlePlayPause = (e) => {
+    e.stopPropagation();
+    if (videoRef.current) {
+      if (playing) {
+        videoRef.current.pause();
+      } else {
+        videoRef.current.play();
+      }
+      setPlaying(!playing);
+    }
+  };
+
+  // Handle mute/unmute
+  const handleMuteToggle = (e) => {
     e.stopPropagation();
     if (videoRef.current) {
       videoRef.current.muted = !videoRef.current.muted;
@@ -23,7 +46,15 @@ export default function MovieCard({
     }
   };
 
-  // Navigate to media details using URL param
+  // Pause video when not hovered
+  useEffect(() => {
+    if (!hovered && videoRef.current) {
+      videoRef.current.pause();
+      setPlaying(false);
+    }
+  }, [hovered]);
+
+  // Navigate to media details
   const handleViewDetailsClick = (e) => {
     e.stopPropagation();
     navigate(`/user/media/${mediaId}`);
@@ -31,114 +62,185 @@ export default function MovieCard({
 
   return (
     <Box
-      sx={{ display: "inline-block", m: 2, position: "relative" }}
+      sx={{
+        display: "inline-block",
+        m: { xs: 1, sm: 1.5 },
+        position: "relative",
+        "&:focus-within": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+          outlineOffset: 2,
+        },
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      tabIndex={0}
+      role="button"
+      aria-label={`View details for ${title}`}
+      onKeyPress={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          handleViewDetailsClick(e);
+        }
+      }}
     >
       <Card
         sx={{
-          width: 200,
-          height: 350,
+          width: { xs: 160, sm: 200, md: 240 },
+          height: { xs: 240, sm: 300, md: 360 },
           cursor: "pointer",
           overflow: "hidden",
-          transition: "transform 0.3s ease",
-          transform: hovered ? "scale(1.05)" : "scale(1)",
-          zIndex: hovered ? 5 : 1,
+          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+          transform: hovered ? "scale(1.05) translateY(-8px)" : "scale(1)",
+          boxShadow: hovered
+            ? "0 12px 24px rgba(0,0,0,0.5)"
+            : "0 4px 8px rgba(0,0,0,0.3)",
+          border: "1px solid rgba(255, 255, 255, 0.1)",
+          borderRadius: 3,
         }}
       >
         <CardMedia
           component="img"
           height="100%"
-          image={posterUrl}
+          image={posterUrl || "/placeholder.jpg"} // Fallback image
           alt={title}
-          sx={{ objectFit: "contain" }}
+          sx={{ objectFit: "cover", transition: "opacity 0.3s ease" }}
         />
       </Card>
 
-      {hovered && trailerUrl && (
+      <Fade in={hovered && !!trailerUrl} timeout={300}>
         <Box
           sx={{
             position: "absolute",
-            top: "50%",
-            left: "105%",
-            transform: "translateY(-50%)",
-            width: 400,
-            maxWidth: "90vw",
+            top: { xs: "100%", sm: "50%" },
+            left: { xs: "50%", sm: "105%" },
+            transform: {
+              xs: "translate(-50%, 8px)",
+              sm: "translateY(-50%)",
+            },
+            width: { xs: "90vw", sm: 400, md: 480 },
+            maxWidth: "95vw",
             bgcolor: "rgba(0,0,0,0.95)",
-            color: "#fff",
-            borderRadius: 2,
-            p: 3,
-            zIndex: 10,
+            color: "text.primary",
+            borderRadius: 3,
+            p: { xs: 2, sm: 3 },
+            zIndex: 1000,
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
+            boxShadow: "0 12px 40px rgba(0,0,0,0.6)",
+            border: "1px solid rgba(255, 255, 255, 0.1)",
           }}
         >
-          <Typography variant="h5" textAlign="center" gutterBottom>
+          <Typography
+            variant="h6"
+            sx={{
+              fontWeight: 600,
+              textAlign: "center",
+              mb: 1,
+              color: "text.primary",
+            }}
+          >
             {title}
           </Typography>
 
           <Typography
             variant="body2"
-            textAlign="center"
-            gutterBottom
-            sx={{ maxHeight: 120, overflowY: "auto" }}
+            sx={{
+              textAlign: "center",
+              mb: 2,
+              color: "text.secondary",
+              maxHeight: { xs: 80, sm: 100 },
+              overflowY: "auto",
+              px: 1,
+              "&::-webkit-scrollbar": {
+                width: "4px",
+              },
+              "&::-webkit-scrollbar-thumb": {
+                backgroundColor: "primary.main",
+                borderRadius: "4px",
+              },
+            }}
           >
             {description}
           </Typography>
 
-          <Box
-            sx={{
-              mt: 2,
-              width: "100%",
-              position: "relative",
-              height: 220,
-              overflow: "hidden",
-              borderRadius: 2,
-              cursor: "pointer",
-            }}
-            onClick={handleMuteClick}
-          >
-            <video
-              ref={videoRef}
-              src={trailerUrl}
-              autoPlay
-              muted={muted}
-              loop
-              playsInline
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-            {muted && (
+          {trailerUrl && (
+            <Box
+              sx={{
+                width: "100%",
+                height: { xs: 180, sm: 220, md: 270 },
+                position: "relative",
+                overflow: "hidden",
+                borderRadius: 2,
+                border: "1px solid rgba(255, 255, 255, 0.1)",
+              }}
+            >
+              <video
+                ref={videoRef}
+                src={trailerUrl}
+                autoPlay={hovered}
+                muted={muted}
+                loop
+                playsInline
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
               <Box
                 sx={{
                   position: "absolute",
-                  bottom: 10,
-                  right: 10,
-                  bgcolor: "rgba(0,0,0,0.6)",
-                  color: "#fff",
-                  px: 1,
-                  py: 0.5,
-                  borderRadius: 1,
-                  fontSize: 12,
-                  zIndex: 5,
+                  bottom: 8,
+                  right: 8,
+                  display: "flex",
+                  gap: 1,
                 }}
               >
-                Click for sound
+                <IconButton
+                  onClick={handlePlayPause}
+                  size="small"
+                  sx={{
+                    bgcolor: "rgba(0,0,0,0.6)",
+                    color: "text.primary",
+                    "&:hover": { bgcolor: "rgba(0,0,0,0.8)" },
+                  }}
+                  aria-label={playing ? "Pause trailer" : "Play trailer"}
+                >
+                  {playing ? <Pause /> : <PlayArrow />}
+                </IconButton>
+                <IconButton
+                  onClick={handleMuteToggle}
+                  size="small"
+                  sx={{
+                    bgcolor: "rgba(0,0,0,0.6)",
+                    color: "text.primary",
+                    "&:hover": { bgcolor: "rgba(0,0,0,0.8)" },
+                  }}
+                  aria-label={muted ? "Unmute trailer" : "Mute trailer"}
+                >
+                  {muted ? <VolumeOff /> : <VolumeUp />}
+                </IconButton>
               </Box>
-            )}
-          </Box>
+            </Box>
+          )}
 
           <Button
             variant="contained"
-            color="primary"
-            sx={{ mt: 2 }}
+            size="large"
             onClick={handleViewDetailsClick}
+            sx={{
+              mt: 2,
+              width: "100%",
+              bgcolor: "primary.main",
+              "&:hover": {
+                bgcolor: "primary.light",
+                transform: "translateY(-2px)",
+              },
+              transition: "all 0.3s ease",
+            }}
+            aria-label={`Watch ${title}`}
           >
-            View Details
+            Watch Now
           </Button>
         </Box>
-      )}
+      </Fade>
     </Box>
   );
 }

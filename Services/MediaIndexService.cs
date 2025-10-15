@@ -166,67 +166,93 @@ namespace MediaServer.Services
             string rating = omdbData["imdbRating"]?.ToString() ?? "";
             string posterUrl = omdbData["Poster"]?.ToString() ?? "";
 
-            // Download poster
+            // --- POSTER DOWNLOAD (Skip if exists) ---
+            string posterFullPath = Path.Combine(movieDir, "poster.jpg");
             string thumbnailPath = string.Empty;
-            if (!string.IsNullOrEmpty(posterUrl) && posterUrl != "N/A")
+
+            if (!File.Exists(posterFullPath))
             {
-                var posterBytes = await httpClient.GetByteArrayAsync(posterUrl);
-                string posterFullPath = Path.Combine(movieDir, "poster.jpg");
-                await File.WriteAllBytesAsync(posterFullPath, posterBytes);
-                thumbnailPath = Path.GetRelativePath(_env.WebRootPath, posterFullPath).Replace("\\", "/");
+                if (!string.IsNullOrEmpty(posterUrl) && posterUrl != "N/A")
+                {
+                    try
+                    {
+                        var posterBytes = await httpClient.GetByteArrayAsync(posterUrl);
+                        await File.WriteAllBytesAsync(posterFullPath, posterBytes);
+                        _logger.LogInformation($"Downloaded poster for '{title}'.");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Failed to download poster for '{title}'.");
+                    }
+                }
+            }
+            else
+            {
+                _logger.LogInformation($"Poster already exists for '{title}', skipping download.");
             }
 
-            // Fetch and download trailer
+            thumbnailPath = Path.GetRelativePath(_env.WebRootPath, posterFullPath).Replace("\\", "/");
+
+            // --- TRAILER DOWNLOAD (Skip if exists) ---
+            string trailerFullPath = Path.Combine(movieDir, "trailer.mp4");
             string trailerPath = string.Empty;
-            string ytSearchUrl = $"https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q={Uri.EscapeDataString(title + " official trailer")}&type=video&key={_youtubeApiKey}";
-            string ytJson = await httpClient.GetStringAsync(ytSearchUrl);
-            var ytData = JsonConvert.DeserializeObject<dynamic>(ytJson);
-            string? videoId = ytData?["items"]?[0]?["id"]?["videoId"]?.ToString();
 
-            if (!string.IsNullOrEmpty(videoId))
+            if (!File.Exists(trailerFullPath))
             {
-                try
+                string ytSearchUrl = $"https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q={Uri.EscapeDataString(title + " official trailer")}&type=video&key={_youtubeApiKey}";
+                string ytJson = await httpClient.GetStringAsync(ytSearchUrl);
+                var ytData = JsonConvert.DeserializeObject<dynamic>(ytJson);
+                string? videoId = ytData?["items"]?[0]?["id"]?["videoId"]?.ToString();
+
+                if (!string.IsNullOrEmpty(videoId))
                 {
-                    Directory.CreateDirectory(movieDir);
-                    string trailerFullPath = Path.Combine(movieDir, "trailer.mp4");
-                    string outputTemplate = trailerFullPath.Replace(".mp4", ".%(ext)s");
-
-                    var processStartInfo = new ProcessStartInfo
+                    try
                     {
-                        FileName = "yt-dlp",
-                        Arguments = $"-o \"{outputTemplate}\" -f bestvideo+bestaudio --merge-output-format mp4 --ffmpeg-location \"{_ffmpegPath}\" --no-progress https://www.youtube.com/watch?v={videoId}",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
+                        Directory.CreateDirectory(movieDir);
+                        string outputTemplate = trailerFullPath.Replace(".mp4", ".%(ext)s");
 
-                    var process = new Process { StartInfo = processStartInfo };
-                    process.OutputDataReceived += (s, e) => { if (e.Data != null) _logger.LogInformation(e.Data); };
-                    process.ErrorDataReceived += (s, e) => { if (e.Data != null) _logger.LogError(e.Data); };
+                        var processStartInfo = new ProcessStartInfo
+                        {
+                            FileName = "yt-dlp",
+                            Arguments = $"-o \"{outputTemplate}\" -f bestvideo+bestaudio --merge-output-format mp4 --ffmpeg-location \"{_ffmpegPath}\" --no-progress https://www.youtube.com/watch?v={videoId}",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
 
-                    process.Start();
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-                    await process.WaitForExitAsync();
+                        var process = new Process { StartInfo = processStartInfo };
+                        process.OutputDataReceived += (s, e) => { if (e.Data != null) _logger.LogInformation(e.Data); };
+                        process.ErrorDataReceived += (s, e) => { if (e.Data != null) _logger.LogError(e.Data); };
 
-                    if (process.ExitCode == 0)
-                    {
-                        trailerPath = Path.GetRelativePath(_env.WebRootPath, trailerFullPath).Replace("\\", "/");
-                        _logger.LogInformation($"Trailer downloaded to: {trailerPath}");
+                        process.Start();
+                        process.BeginOutputReadLine();
+                        process.BeginErrorReadLine();
+                        await process.WaitForExitAsync();
+
+                        if (process.ExitCode == 0)
+                        {
+                            _logger.LogInformation($"Trailer downloaded for '{title}'.");
+                        }
+                        else
+                        {
+                            _logger.LogError($"yt-dlp failed for videoId {videoId}");
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        _logger.LogError($"yt-dlp failed for videoId {videoId}");
+                        _logger.LogError(ex, $"Error downloading trailer for '{title}'");
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"Error downloading trailer for '{title}'");
                 }
             }
+            else
+            {
+                _logger.LogInformation($"Trailer already exists for '{title}', skipping download.");
+            }
 
-            // Check if movie exists
+            trailerPath = Path.GetRelativePath(_env.WebRootPath, trailerFullPath).Replace("\\", "/");
+
+            // --- DATABASE INSERT ---
             var existingMedia = await _dbContext.Media.FirstOrDefaultAsync(m => m.Title == title && m.Type == "Movie");
             if (existingMedia != null)
             {
@@ -234,7 +260,6 @@ namespace MediaServer.Services
                 return;
             }
 
-            // Insert into DB
             var media = new Media
             {
                 Title = title,
@@ -248,36 +273,29 @@ namespace MediaServer.Services
             _dbContext.Media.Add(media);
             await _dbContext.SaveChangesAsync();
 
-            // Process movie files
+            // --- MOVIE FILES ---
             var movieFiles = Directory.GetFiles(movieDir)
                 .Where(f => !f.EndsWith("poster.jpg") && !f.EndsWith("trailer.mp4") && (f.EndsWith(".mp4") || f.EndsWith(".mkv")))
                 .ToList();
 
             foreach (var filePath in movieFiles)
             {
-                string finalFilePath = filePath;
-                if (filePath.EndsWith(".mkv"))
-                {
-                    finalFilePath = filePath;
-                }
-
                 _dbContext.MovieFiles.Add(new MovieFiles
                 {
                     MediaId = media.MediaId,
-                    FilePath = Path.GetRelativePath(_env.WebRootPath, finalFilePath).Replace("\\", "/"),
-                    FileName = Path.GetFileName(finalFilePath)
+                    FilePath = Path.GetRelativePath(_env.WebRootPath, filePath).Replace("\\", "/"),
+                    FileName = Path.GetFileName(filePath)
                 });
             }
 
             await _dbContext.SaveChangesAsync();
         }
-
         private async Task IndexSeriesAsync(string seriesDir)
         {
             string title = Path.GetFileName(seriesDir);
             using var httpClient = new HttpClient();
 
-            // Fetch IMDb ID
+            // --- IMDb ID Lookup ---
             string? imdbId = await GetImdbIdAsync(title);
             if (string.IsNullOrEmpty(imdbId))
             {
@@ -285,7 +303,7 @@ namespace MediaServer.Services
                 return;
             }
 
-            // OMDB metadata
+            // --- OMDB Metadata ---
             string omdbUrl = $"https://www.omdbapi.com/?apikey={_omdbApiKey}&i={imdbId}&type=series";
             string omdbJson = await httpClient.GetStringAsync(omdbUrl);
             var omdbData = JsonConvert.DeserializeObject<dynamic>(omdbJson);
@@ -301,89 +319,133 @@ namespace MediaServer.Services
             string rating = omdbData["imdbRating"]?.ToString() ?? "";
             string posterUrl = omdbData["Poster"]?.ToString() ?? "";
 
-            // Download poster
+            // --- POSTER DOWNLOAD (skip if exists) ---
+            string posterFullPath = Path.Combine(seriesDir, "poster.jpg");
             string thumbnailPath = string.Empty;
-            if (!string.IsNullOrEmpty(posterUrl) && posterUrl != "N/A")
+
+            if (!File.Exists(posterFullPath))
             {
-                var posterBytes = await httpClient.GetByteArrayAsync(posterUrl);
-                string posterFullPath = Path.Combine(seriesDir, "poster.jpg");
-                await File.WriteAllBytesAsync(posterFullPath, posterBytes);
-                thumbnailPath = Path.GetRelativePath(_env.WebRootPath, posterFullPath).Replace("\\", "/");
+                if (!string.IsNullOrEmpty(posterUrl) && posterUrl != "N/A")
+                {
+                    try
+                    {
+                        var posterBytes = await httpClient.GetByteArrayAsync(posterUrl);
+                        await File.WriteAllBytesAsync(posterFullPath, posterBytes);
+                        _logger.LogInformation($"Downloaded poster for '{title}'.");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"Failed to download poster for '{title}'.");
+                    }
+                }
+            }
+            else
+            {
+                _logger.LogInformation($"Poster already exists for '{title}', skipping download.");
             }
 
-            // Download trailer
+            thumbnailPath = Path.GetRelativePath(_env.WebRootPath, posterFullPath).Replace("\\", "/");
+
+            // --- TRAILER DOWNLOAD (skip if exists) ---
+            string trailerFullPath = Path.Combine(seriesDir, "trailer.mp4");
             string trailerPath = string.Empty;
-            string ytSearchUrl = $"https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q={Uri.EscapeDataString(title + " official trailer")}&type=video&key={_youtubeApiKey}";
-            string ytJson = await httpClient.GetStringAsync(ytSearchUrl);
-            var ytData = JsonConvert.DeserializeObject<dynamic>(ytJson);
-            string? videoId = ytData?["items"]?[0]?["id"]?["videoId"]?.ToString();
 
-            if (!string.IsNullOrEmpty(videoId))
+            if (!File.Exists(trailerFullPath))
             {
-                try
+                string ytSearchUrl = $"https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q={Uri.EscapeDataString(title + " official trailer")}&type=video&key={_youtubeApiKey}";
+                string ytJson = await httpClient.GetStringAsync(ytSearchUrl);
+                var ytData = JsonConvert.DeserializeObject<dynamic>(ytJson);
+                string? videoId = ytData?["items"]?[0]?["id"]?["videoId"]?.ToString();
+
+                if (!string.IsNullOrEmpty(videoId))
                 {
-                    Directory.CreateDirectory(seriesDir);
-                    string trailerFullPath = Path.Combine(seriesDir, "trailer.mp4");
-                    string outputTemplate = trailerFullPath.Replace(".mp4", ".%(ext)s");
-
-                    var processStartInfo = new ProcessStartInfo
+                    try
                     {
-                        FileName = "yt-dlp",
-                        Arguments = $"-o \"{outputTemplate}\" -f bestvideo+bestaudio --merge-output-format mp4 --ffmpeg-location \"{_ffmpegPath}\" --no-progress https://www.youtube.com/watch?v={videoId}",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
+                        Directory.CreateDirectory(seriesDir);
+                        string outputTemplate = trailerFullPath.Replace(".mp4", ".%(ext)s");
 
-                    var process = new Process { StartInfo = processStartInfo };
-                    process.OutputDataReceived += (s, e) => { if (e.Data != null) _logger.LogInformation(e.Data); };
-                    process.ErrorDataReceived += (s, e) => { if (e.Data != null) _logger.LogError(e.Data); };
+                        var psi = new ProcessStartInfo
+                        {
+                            FileName = "yt-dlp",
+                            Arguments = $"-o \"{outputTemplate}\" -f bestvideo+bestaudio --merge-output-format mp4 --ffmpeg-location \"{_ffmpegPath}\" --no-progress https://www.youtube.com/watch?v={videoId}",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
 
-                    process.Start();
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-                    await process.WaitForExitAsync();
+                        var process = new Process { StartInfo = psi };
+                        process.OutputDataReceived += (s, e) => { if (e.Data != null) _logger.LogInformation(e.Data); };
+                        process.ErrorDataReceived += (s, e) => { if (e.Data != null) _logger.LogError(e.Data); };
 
-                    if (process.ExitCode == 0)
-                    {
-                        trailerPath = Path.GetRelativePath(_env.WebRootPath, trailerFullPath).Replace("\\", "/");
-                        _logger.LogInformation($"Trailer downloaded to: {trailerPath}");
+                        process.Start();
+                        process.BeginOutputReadLine();
+                        process.BeginErrorReadLine();
+                        await process.WaitForExitAsync();
+
+                        if (process.ExitCode == 0)
+                            _logger.LogInformation($"Trailer downloaded for '{title}'.");
+                        else
+                            _logger.LogError($"yt-dlp failed for videoId {videoId}");
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        _logger.LogError($"yt-dlp failed for videoId {videoId}");
+                        _logger.LogError(ex, $"Error downloading trailer for '{title}'");
                     }
                 }
-                catch (Exception ex)
+            }
+            else
+            {
+                _logger.LogInformation($"Trailer already exists for '{title}', skipping download.");
+            }
+
+            trailerPath = Path.GetRelativePath(_env.WebRootPath, trailerFullPath).Replace("\\", "/");
+
+            // --- MEDIA: Find or Create ---
+            var media = await _dbContext.Media
+                .Include(m => m.SeriesSeasons)
+                .ThenInclude(s => s.SeriesEpisodes)
+                .FirstOrDefaultAsync(m => m.Title == title && m.Type == "Series");
+
+            if (media == null)
+            {
+                media = new Media
                 {
-                    _logger.LogError(ex, $"Error downloading trailer for '{title}'");
+                    Title = title,
+                    Description = description,
+                    Type = "Series",
+                    ReleaseYear = releaseYear,
+                    Rating = rating,
+                    ThumbnailPath = thumbnailPath,
+                    TrailerPath = trailerPath
+                };
+
+                _dbContext.Media.Add(media);
+                await _dbContext.SaveChangesAsync();
+                _logger.LogInformation($"Inserted new series '{title}'.");
+            }
+            else
+            {
+                // Optional metadata update
+                bool changed = false;
+                if (string.IsNullOrEmpty(media.Description) && !string.IsNullOrEmpty(description))
+                {
+                    media.Description = description;
+                    changed = true;
+                }
+                if (string.IsNullOrEmpty(media.Rating) && !string.IsNullOrEmpty(rating))
+                {
+                    media.Rating = rating;
+                    changed = true;
+                }
+                if (changed)
+                {
+                    _dbContext.Update(media);
+                    await _dbContext.SaveChangesAsync();
                 }
             }
 
-            // Check if series exists
-            var existingMedia = await _dbContext.Media.FirstOrDefaultAsync(m => m.Title == title && m.Type == "Series");
-            if (existingMedia != null)
-            {
-                _logger.LogInformation($"Series '{title}' already exists in DB.");
-                return;
-            }
-
-            // Insert media
-            var media = new Media
-            {
-                Title = title,
-                Description = description,
-                Type = "Series",
-                ReleaseYear = releaseYear,
-                Rating = rating,
-                ThumbnailPath = thumbnailPath,
-                TrailerPath = trailerPath
-            };
-            _dbContext.Media.Add(media);
-            await _dbContext.SaveChangesAsync();
-
-            // Traverse seasons
+            // --- SEASONS & EPISODES ---
             var seasonDirs = Directory.GetDirectories(seriesDir)
                 .Where(d => Path.GetFileName(d).StartsWith("Season ", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(d => int.TryParse(Path.GetFileName(d).Substring(7), out int num) ? num : 0)
@@ -394,16 +456,22 @@ namespace MediaServer.Services
                 string seasonName = Path.GetFileName(seasonDir);
                 if (!int.TryParse(seasonName.Substring(7), out int seasonNumber)) continue;
 
-                var season = new SeriesSeasons
+                var season = media.SeriesSeasons.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
+                if (season == null)
                 {
-                    MediaId = media.MediaId,
-                    SeasonNumber = seasonNumber,
-                    Title = seasonName
-                };
-                _dbContext.SeriesSeasons.Add(season);
-                await _dbContext.SaveChangesAsync();
+                    season = new SeriesSeasons
+                    {
+                        MediaId = media.MediaId,
+                        SeasonNumber = seasonNumber,
+                        Title = seasonName,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    media.SeriesSeasons.Add(season);
+                    await _dbContext.SaveChangesAsync();
 
-                // Process episodes
+                    _logger.LogInformation($"Added new season {seasonNumber} for '{title}'.");
+                }
+
                 var episodeFiles = Directory.GetFiles(seasonDir)
                     .Where(f => f.EndsWith(".mp4") || f.EndsWith(".mkv"))
                     .OrderBy(f => f)
@@ -412,38 +480,37 @@ namespace MediaServer.Services
                 int episodeCounter = 1;
                 foreach (var filePath in episodeFiles)
                 {
-                    string finalFilePath = filePath;
-                    if (filePath.EndsWith(".mkv"))
-                    {
-                        finalFilePath = filePath;
-                    }
-
-                    string fileName = Path.GetFileName(finalFilePath);
+                    string fileName = Path.GetFileName(filePath);
                     int episodeNumber = episodeCounter;
 
-                    // Parse episode number from filename
                     if (Regex.Match(fileName, @"E(\d+)", RegexOptions.IgnoreCase) is var match && match.Success)
-                    {
                         int.TryParse(match.Groups[1].Value, out episodeNumber);
-                    }
                     else if (Regex.Match(fileName, @"Episode (\d+)", RegexOptions.IgnoreCase) is var match2 && match2.Success)
-                    {
                         int.TryParse(match2.Groups[1].Value, out episodeNumber);
+
+                    if (season.SeriesEpisodes.Any(e => e.EpisodeNumber == episodeNumber))
+                    {
+                        _logger.LogInformation($"Episode {episodeNumber} already exists for {title} Season {seasonNumber}, skipping.");
+                        episodeCounter++;
+                        continue;
                     }
 
-                    _dbContext.SeriesEpisodes.Add(new SeriesEpisodes
+                    season.SeriesEpisodes.Add(new SeriesEpisodes
                     {
-                        SeasonId = season.SeasonId,
                         EpisodeNumber = episodeNumber,
                         Title = $"Episode {episodeNumber}",
-                        FilePath = Path.GetRelativePath(_env.WebRootPath, finalFilePath).Replace("\\", "/")
+                        FilePath = Path.GetRelativePath(_env.WebRootPath, filePath).Replace("\\", "/"),
+                        CreatedAt = DateTime.UtcNow
                     });
 
+                    _logger.LogInformation($"Added Episode {episodeNumber} for {title} Season {seasonNumber}.");
                     episodeCounter++;
                 }
+
                 await _dbContext.SaveChangesAsync();
             }
         }
+
     }
 
     // Helper classes for JSON deserialization

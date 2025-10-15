@@ -18,4 +18,6 @@ public partial class Users
     public DateTime CreatedAt { get; set; }
 
     public bool IsActive { get; set; }
+
+    public virtual ICollection<UserPlaybackProgress> UserPlaybackProgress { get; set; } = new List<UserPlaybackProgress>();
 }

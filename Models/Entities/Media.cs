@@ -30,4 +30,6 @@ public partial class Media
     public virtual ICollection<MovieFiles> MovieFiles { get; set; } = new List<MovieFiles>();
 
     public virtual ICollection<SeriesSeasons> SeriesSeasons { get; set; } = new List<SeriesSeasons>();
+
+    public virtual ICollection<UserPlaybackProgress> UserPlaybackProgress { get; set; } = new List<UserPlaybackProgress>();
 }

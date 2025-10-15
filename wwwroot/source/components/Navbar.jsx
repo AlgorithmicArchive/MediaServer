@@ -83,13 +83,6 @@ const MyNavbar = () => {
           >
             Dashboard
           </Button>
-          <Button
-            component={Link}
-            to="/user/test"
-            sx={getNavItemStyle("/user/test")}
-          >
-            Test
-          </Button>
         </>
       )}
 
@@ -116,8 +109,8 @@ const MyNavbar = () => {
               },
             }}
           >
-            <MenuItem onClick={() => handleNavigate("/admin/users")}>
-              Users
+            <MenuItem onClick={() => handleNavigate("/admin/managemedia")}>
+              Media
             </MenuItem>
             <MenuItem onClick={() => handleNavigate("/admin/settings")}>
               Settings
