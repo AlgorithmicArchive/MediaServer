@@ -183,21 +183,76 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
             userId, request.MediaId, request.EpisodeId, request.Position, request.Duration);
         return Ok(new { message = "Progress updated successfully" });
     }
+
     [HttpGet]
     [AllowAnonymous]
-    public IActionResult StreamMedia(string filePath)
+    public async Task<IActionResult> StreamMedia(string filePath)
     {
-        _logger.LogInformation($"  --------------------Requested file path: {_env.WebRootPath} ---------");
-        var fullPath = Path.Combine(_env.WebRootPath, filePath = Path.DirectorySeparatorChar == '\\'
-    ? filePath.Replace('/', '\\')
-    : filePath.Replace('\\', '/'));
-        _logger.LogInformation($"---------- Streaming media from path: {fullPath} ------------");
-        if (!System.IO.File.Exists(fullPath)) return NotFound();
+        var fullPath = Path.Combine(_env.WebRootPath,
+            Path.DirectorySeparatorChar == '\\'
+                ? filePath.Replace('/', '\\')
+                : filePath.Replace('\\', '/'));
 
-        var stream = System.IO.File.OpenRead(fullPath);
-        var contentType = "video/mp4"; // adjust if needed
-        return File(stream, contentType, enableRangeProcessing: true);
+        if (!System.IO.File.Exists(fullPath))
+            return NotFound();
+
+        var fileExt = Path.GetExtension(fullPath).ToLower();
+
+        // 1️⃣ Direct streaming if MP4 and supported codec
+        if (fileExt == ".mp4")
+        {
+            var stream = System.IO.File.OpenRead(fullPath);
+            return File(stream, "video/mp4", enableRangeProcessing: true);
+        }
+
+        // 2️⃣ MKV or unsupported codec → on-the-fly transcoding
+
+        Response.ContentType = "video/mp4";
+        Response.Headers.Append("Accept-Ranges", "bytes");
+
+        // Check if browser sent Range header
+        var rangeHeader = Request.Headers["Range"].ToString();
+        string ffmpegArgs;
+
+        if (!string.IsNullOrEmpty(rangeHeader) && rangeHeader.StartsWith("bytes="))
+        {
+            var range = rangeHeader.Substring("bytes=".Length).Split('-');
+            long startSeconds = 0;
+            if (long.TryParse(range[0], out var startBytes))
+            {
+                // Estimate start time in seconds (rough approximation)
+                startSeconds = startBytes / (1024 * 1024 / 8); // assuming ~1Mbps video, adjust if needed
+            }
+
+            ffmpegArgs = $"-ss {startSeconds} -i \"{fullPath}\" -c:v libx264 -c:a aac -movflags frag_keyframe+faststart -f mp4 -";
+        }
+        else
+        {
+            ffmpegArgs = $"-i \"{fullPath}\" -c:v libx264 -c:a aac -movflags frag_keyframe+faststart -f mp4 -";
+        }
+
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = ffmpegArgs,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+
+        // Pipe output to response body asynchronously
+        await process.StandardOutput.BaseStream.CopyToAsync(Response.Body);
+        process.WaitForExit();
+
+        return new EmptyResult();
     }
+
 
     [HttpGet]
     public async Task<IActionResult> GetContinueWatching(int userId)
