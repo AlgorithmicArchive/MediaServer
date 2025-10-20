@@ -191,7 +191,7 @@ namespace MediaServer.Services
                 _logger.LogInformation($"Poster already exists for '{title}', skipping download.");
             }
 
-            thumbnailPath = Path.GetRelativePath(_env.WebRootPath, posterFullPath).Replace("\\", "/");
+            thumbnailPath = Path.GetRelativePath("/home/server/Downloads", posterFullPath).Replace("\\", "/");
 
             // --- TRAILER DOWNLOAD (Skip if exists) ---
             string trailerFullPath = Path.Combine(movieDir, "trailer.mp4");
@@ -250,7 +250,7 @@ namespace MediaServer.Services
                 _logger.LogInformation($"Trailer already exists for '{title}', skipping download.");
             }
 
-            trailerPath = Path.GetRelativePath(_env.WebRootPath, trailerFullPath).Replace("\\", "/");
+            trailerPath = Path.GetRelativePath("/home/server/Downloads", trailerFullPath).Replace("\\", "/");
 
             // --- DATABASE INSERT ---
             var existingMedia = await _dbContext.Media.FirstOrDefaultAsync(m => m.Title == title && m.Type == "Movie");
@@ -283,7 +283,7 @@ namespace MediaServer.Services
                 _dbContext.MovieFiles.Add(new MovieFiles
                 {
                     MediaId = media.MediaId,
-                    FilePath = Path.GetRelativePath(_env.WebRootPath, filePath).Replace("\\", "/"),
+                    FilePath = Path.GetRelativePath("/home/server/Downloads", filePath).Replace("\\", "/"),
                     FileName = Path.GetFileName(filePath)
                 });
             }
@@ -344,7 +344,7 @@ namespace MediaServer.Services
                 _logger.LogInformation($"Poster already exists for '{title}', skipping download.");
             }
 
-            thumbnailPath = Path.GetRelativePath(_env.WebRootPath, posterFullPath).Replace("\\", "/");
+            thumbnailPath = Path.GetRelativePath("/home/server/Downloads", posterFullPath).Replace("\\", "/");
 
             // --- TRAILER DOWNLOAD (skip if exists) ---
             string trailerFullPath = Path.Combine(seriesDir, "trailer.mp4");
@@ -399,7 +399,7 @@ namespace MediaServer.Services
                 _logger.LogInformation($"Trailer already exists for '{title}', skipping download.");
             }
 
-            trailerPath = Path.GetRelativePath(_env.WebRootPath, trailerFullPath).Replace("\\", "/");
+            trailerPath = Path.GetRelativePath("/home/server/Downloads", trailerFullPath).Replace("\\", "/");
 
             // --- MEDIA: Find or Create ---
             var media = await _dbContext.Media
@@ -499,7 +499,7 @@ namespace MediaServer.Services
                     {
                         EpisodeNumber = episodeNumber,
                         Title = $"Episode {episodeNumber}",
-                        FilePath = Path.GetRelativePath(_env.WebRootPath, filePath).Replace("\\", "/"),
+                        FilePath = Path.GetRelativePath("/home/server/Downloads", filePath).Replace("\\", "/"),
                         CreatedAt = DateTime.UtcNow
                     });
 

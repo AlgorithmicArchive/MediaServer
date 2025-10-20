@@ -81,7 +81,7 @@ public class AdminController(ILogger<AdminController> logger, MediaServerContext
 
         var result = new
         {
-            basePath = _env.WebRootPath,
+            basePath = "/home/server/Downloads",
             media.MediaId,
             media.Title,
             media.Description,
@@ -143,7 +143,7 @@ public class AdminController(ILogger<AdminController> logger, MediaServerContext
     [HttpGet]
     public async Task<IActionResult> IndexMedia()
     {
-        string wwwRoot = _env.WebRootPath;
+        string wwwRoot = '/home/server/Downloads'
 
         string moviesPath = Path.Combine(wwwRoot, "Movies");
         string seriesPath = Path.Combine(wwwRoot, "Series");
@@ -265,7 +265,7 @@ public class AdminController(ILogger<AdminController> logger, MediaServerContext
             // Collect file paths and folders to delete after database operation
             var filesToDelete = new List<string>();
             var foldersToDelete = new HashSet<string>(); // Use HashSet to avoid duplicates
-            string wwwRoot = _env.WebRootPath;
+            string wwwRoot = "/home/server/Downloads"
 
             if (!string.IsNullOrEmpty(media.ThumbnailPath))
             {
@@ -384,7 +384,7 @@ public class AdminController(ILogger<AdminController> logger, MediaServerContext
                 return NotFound(new { error = "Season not found" });
 
             // Collect episode file paths and folder
-            string wwwRoot = _env.WebRootPath;
+            string wwwRoot = "/home/server/Downloads";
             var filesToDelete = new List<string>();
             string? seasonFolder = null;
             foreach (var episode in season.SeriesEpisodes)
@@ -475,7 +475,7 @@ public class AdminController(ILogger<AdminController> logger, MediaServerContext
             }
 
             // Collect episode file path
-            string wwwRoot = _env.WebRootPath;
+            string wwwRoot = "/home/server/Downloads";
             var filePath = Path.Combine(wwwRoot, episode.FilePath.TrimStart('/'));
             var filesToDelete = IsPathSafe(filePath, wwwRoot) ? new List<string> { filePath } : new List<string>();
 

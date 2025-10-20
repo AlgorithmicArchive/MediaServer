@@ -188,7 +188,7 @@ public class UserController(ILogger<UserController> logger, MediaServerContext d
     [AllowAnonymous]
     public async Task<IActionResult> StreamMedia(string filePath)
     {
-        var fullPath = Path.Combine(_env.WebRootPath,
+        var fullPath = Path.Combine("/home/server/Downloads",
             Path.DirectorySeparatorChar == '\\'
                 ? filePath.Replace('/', '\\')
                 : filePath.Replace('\\', '/'));
